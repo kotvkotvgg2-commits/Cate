@@ -445,7 +445,7 @@
     </div>
     <div class="qr-body">
       <div class="qr-img-wrap">
-        <img id="qr-img" src="" alt="QR Code"/>
+        <div id="qr-canvas-wrap" style="width:220px;height:220px;display:flex;align-items:center;justify-content:center"></div>
       </div>
       <div class="qr-info" id="qr-info"></div>
       <div class="qr-actions">
@@ -467,7 +467,7 @@
   const STATUS_EMOJI = ["⏳","⚙️","✅","📦"];
 
   // ── ถ้าเปิดผ่าน Google Drive แล้ว URL หาย ให้วาง URL ตรงนี้ได้เลย ──
-  const HARDCODED_URL = "https://script.google.com/macros/s/AKfycbxKmkr_JwZTZz7WJTvFRK6MNPLRhEQWFYFJkJYjJEvcldUn1WcaGq7iYAuqwMkfJ632/exec"; // ← ใส่ URL Apps Script ของคุณที่นี่ เช่น "https://script.google.com/macros/s/xxx/exec"
+  const HARDCODED_URL = "https://script.google.com/macros/s/AKfycbwmuhBOOCG_dNdJPXoAXwEJ9x7KzQswyC1e95mEbpVT2_Hbu2e_yeanvIEkkC1BKNqh/exec"; // ← ใส่ URL Apps Script ของคุณที่นี่ เช่น "https://script.google.com/macros/s/xxx/exec"
 
   let SCRIPT_URL   = HARDCODED_URL || localStorage.getItem("scriptUrl") || "";
   let MACHINES = []; // รายชื่อเครื่องดึงจาก Sheet
@@ -959,9 +959,18 @@
     });
   }
 
-  function openQR(data){
+  async function loadQRLib(){
+    if(window.QRCode) return;
+    return new Promise((resolve,reject)=>{
+      const s=document.createElement('script');
+      s.src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+      s.onload=resolve; s.onerror=reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  async function openQR(data){
     _qrData = data;
-    // สร้าง QR content
     const text = [
       "ชื่องาน: " + data.name,
       "หมายเลข Dwg.: " + data.code,
@@ -969,11 +978,6 @@
       "ลูกค้า: " + (data.customer || "-"),
     ].join("\n");
 
-    // Google Charts QR API
-    const encoded = encodeURIComponent(text);
-    const url = `https://chart.googleapis.com/chart?chs=300x300&cht=qr&chl=${encoded}&choe=UTF-8`;
-
-    document.getElementById("qr-img").src = url;
     document.getElementById("qr-info").innerHTML =
       `<span>ชื่องาน</span><br><b>${esc(data.name)}</b><br>` +
       `<span>หมายเลข Dwg.</span><br><b>${esc(data.code)}</b><br>` +
@@ -981,7 +985,33 @@
       `<span>ลูกค้า</span><br><b>${esc(data.customer||"-")}</b>`;
 
     document.getElementById("qr-overlay").classList.add("open");
+
+    // โหลด QR lib แล้วสร้าง QR
+    const wrap = document.getElementById("qr-canvas-wrap");
+    wrap.innerHTML = '<div style="color:var(--text-muted);font-size:0.9rem;padding:20px">กำลังสร้าง QR...</div>';
+    try{
+      await loadQRLib();
+      wrap.innerHTML = "";
+      new QRCode(wrap, {
+        text: text,
+        width: 220,
+        height: 220,
+        colorDark: "#000000",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.M
+      });
+      // cache canvas/img for download
+      setTimeout(()=>{
+        const canvas = wrap.querySelector("canvas");
+        const img    = wrap.querySelector("img");
+        _qrDataURL   = canvas ? canvas.toDataURL("image/png") : (img ? img.src : null);
+      }, 200);
+    }catch(e){
+      wrap.innerHTML = '<div style="color:var(--red)">โหลด QR ไม่สำเร็จ กรุณาใช้งานผ่าน https://</div>';
+    }
   }
+
+  let _qrDataURL = null;
 
   function closeQR(){
     document.getElementById("qr-overlay").classList.remove("open");
@@ -992,31 +1022,22 @@
   });
 
   function downloadQR(){
-    if(!_qrData) return;
-    const img = document.getElementById("qr-img");
-    // fetch image and download
-    fetch(img.src)
-      .then(r=>r.blob())
-      .then(blob=>{
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = `QR_${_qrData.code||_qrData.name}.png`;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      })
-      .catch(()=>showToast("ดาวน์โหลดไม่สำเร็จ",true));
+    if(!_qrDataURL){ showToast("QR ยังไม่พร้อม รอสักครู่",true); return; }
+    const a = document.createElement("a");
+    a.href = _qrDataURL;
+    a.download = `QR_${(_qrData.code||_qrData.name).replace(/[^a-zA-Z0-9ก-๙\-_]/g,"_")}.png`;
+    a.click();
   }
 
   function printQR(){
     if(!_qrData) return;
-    const img = document.getElementById("qr-img");
     const area = document.getElementById("qr-print-area");
     area.innerHTML = `
       <h2>${esc(_qrData.name)}</h2>
       <p>หมายเลข Dwg.: <b>${esc(_qrData.code)}</b></p>
       <p>จำนวน: <b>${esc(_qrData.target)}</b></p>
       <p>ลูกค้า: <b>${esc(_qrData.customer||"-")}</b></p>
-      <img src="${img.src}" alt="QR Code"/>
+      ${_qrDataURL ? `<img src="${_qrDataURL}" alt="QR Code"/>` : ""}
     `;
     window.print();
   }
